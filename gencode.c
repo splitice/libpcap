@@ -1717,7 +1717,7 @@ gen_load_a(compiler_state_t *cstate, enum e_offrel offrel, u_int offset,
 		s2->s.k = cstate->off_linkpl.constant_part + cstate->off_nl + offset;
 		sappend(s, s2);
 		 }else{
-			s = gen_load_absoffsetrel(cstate, &cstate->off_linkpl.constant_part, offset, size);
+			s = gen_load_absoffsetrel(cstate, &cstate->off_linkpl, offset, size);
 		 }
 		break;
 
