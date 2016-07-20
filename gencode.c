@@ -6463,7 +6463,9 @@ gen_scode(compiler_state_t *cstate, const char *name, struct qual q)
 			bpf_error(cstate, "illegal port number %d > 65535", port2);
 
 		b = gen_portrange(cstate, port1, port2, real_proto, dir);
+		if(!cstate->noip){
 		gen_or(gen_portrange6(cstate, port1, port2, real_proto, dir), b);
+		}
 		return b;
 
 	case Q_GATEWAY:
@@ -6634,7 +6636,9 @@ gen_ncode(compiler_state_t *cstate, const char *s, bpf_u_int32 v, struct qual q)
 	    {
 		struct block *b;
 		b = gen_portrange(cstate, (int)v, (int)v, proto, dir);
-		gen_or(gen_portrange6(cstate, (int)v, (int)v, proto, dir), b);
+		if(!cstate->noip){
+			gen_or(gen_portrange6(cstate, (int)v, (int)v, proto, dir), b);
+		}
 		return b;
 	    }
 
