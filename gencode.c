@@ -5419,11 +5419,10 @@ gen_portrangeop(compiler_state_t *cstate, int port1, int port2, int proto,
 	if(!cstate->noip){
 		tmp = gen_cmp(cstate, OR_LINKPL, 9, BPF_B, (bpf_int32)proto);
 		b0 = gen_ipfrag(cstate);
+		gen_and(tmp, b0);
 	 }else{
 		 b0 = gen_true(cstate);
 	 }
-	
-		gen_and(tmp, b0);
 
 	switch (dir) {
 	case Q_SRC:
