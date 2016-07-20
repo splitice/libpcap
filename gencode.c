@@ -5423,7 +5423,7 @@ gen_portrangeop(compiler_state_t *cstate, int port1, int port2, int proto,
 		 b0 = gen_true(cstate);
 	 }
 	
-	gen_and(tmp, b0);
+		gen_and(tmp, b0);
 
 	switch (dir) {
 	case Q_SRC:
