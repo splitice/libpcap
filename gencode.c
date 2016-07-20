@@ -5464,8 +5464,6 @@ gen_portrange(compiler_state_t *cstate, int port1, int port2, int ip_proto,
 	/* link proto ip */
 	if(!cstate->noip){
 		b0 = gen_linktype(cstate, ETHERTYPE_IP);
-	 }else{
-		 b0 = gen_true(cstate);
 	 }
 
 	switch (ip_proto) {
@@ -5486,6 +5484,11 @@ gen_portrange(compiler_state_t *cstate, int port1, int port2, int ip_proto,
 	default:
 		abort();
 	}
+	
+	if(cstate->noip){
+		return b1;
+	}
+	
 	gen_and(b0, b1);
 	return b1;
 }
