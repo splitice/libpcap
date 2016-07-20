@@ -3064,7 +3064,7 @@ gen_linktype(compiler_state_t *cstate, int proto)
 		break;
 
 	case DLT_RAW_TRANSPORT:
-		return gen_false(true);
+		return gen_true(cstate);
 		
 	case DLT_SLIP:
 	case DLT_SLIP_BSDOS:
