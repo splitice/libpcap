@@ -5562,7 +5562,12 @@ gen_portrange6(compiler_state_t *cstate, int port1, int port2, int ip_proto,
 	struct block *b0, *b1, *tmp;
 
 	/* link proto ip6 */
-	b0 = gen_linktype(cstate, ETHERTYPE_IPV6);
+	
+	if(!cstate->noip){
+		b0 = gen_linktype(cstate, ETHERTYPE_IPV6);
+	 }else{
+		 b0 = gen_true(cstate);
+	 }
 
 	switch (ip_proto) {
 	case IPPROTO_UDP:
