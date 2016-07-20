@@ -1699,7 +1699,8 @@ gen_load_a(compiler_state_t *cstate, enum e_offrel offrel, u_int offset,
 		 * preceded by a variable-length header such as a radio
 		 * header), in bytes.
 		 */
-		s = gen_loadx_iphdrlen(cstate);
+		 if(!cstate->noip){
+			s = gen_loadx_iphdrlen(cstate);
 
 		/*
 		 * Load the item at {offset of the link-layer payload} +
@@ -1715,6 +1716,9 @@ gen_load_a(compiler_state_t *cstate, enum e_offrel offrel, u_int offset,
 		s2 = new_stmt(cstate, BPF_LD|BPF_IND|size);
 		s2->s.k = cstate->off_linkpl.constant_part + cstate->off_nl + offset;
 		sappend(s, s2);
+		 }else{
+			s = gen_load_absoffsetrel(cstate, &cstate->off_linkpl.constant_part, offset, size);
+		 }
 		break;
 
 	case OR_TRAN_IPV6:
