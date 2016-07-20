@@ -1722,7 +1722,11 @@ gen_load_a(compiler_state_t *cstate, enum e_offrel offrel, u_int offset,
 		break;
 
 	case OR_TRAN_IPV6:
-		s = gen_load_absoffsetrel(cstate, &cstate->off_linkpl, cstate->off_nl + 40 + offset, size);
+		u_int offset = cstate->off_nl + offset;
+		if(!cstate->noip){
+			offset += 40;
+		}
+		s = gen_load_absoffsetrel(cstate, &cstate->off_linkpl, offset, size);
 		break;
 
 	default:
