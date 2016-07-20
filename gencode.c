@@ -5292,11 +5292,14 @@ gen_port(compiler_state_t *cstate, int port, int ip_proto, int dir)
 		break;
 
 	case PROTO_UNDEF:
-		tmp = gen_portop(cstate, port, IPPROTO_TCP, dir);
 		b1 = gen_portop(cstate, port, IPPROTO_UDP, dir);
+		
+	if(!cstate->noip){
+		tmp = gen_portop(cstate, port, IPPROTO_TCP, dir);
 		gen_or(tmp, b1);
 		tmp = gen_portop(cstate, port, IPPROTO_SCTP, dir);
 		gen_or(tmp, b1);
+	}
 		break;
 
 	default:
@@ -5369,11 +5372,13 @@ gen_port6(compiler_state_t *cstate, int port, int ip_proto, int dir)
 		break;
 
 	case PROTO_UNDEF:
-		tmp = gen_portop6(cstate, port, IPPROTO_TCP, dir);
 		b1 = gen_portop6(cstate, port, IPPROTO_UDP, dir);
+	if(!cstate->noip){
+		tmp = gen_portop6(cstate, port, IPPROTO_TCP, dir);
 		gen_or(tmp, b1);
 		tmp = gen_portop6(cstate, port, IPPROTO_SCTP, dir);
 		gen_or(tmp, b1);
+	}
 		break;
 
 	default:
@@ -5473,11 +5478,14 @@ gen_portrange(compiler_state_t *cstate, int port1, int port2, int ip_proto,
 		break;
 
 	case PROTO_UNDEF:
-		tmp = gen_portrangeop(cstate, port1, port2, IPPROTO_TCP, dir);
 		b1 = gen_portrangeop(cstate, port1, port2, IPPROTO_UDP, dir);
+		
+	if(!cstate->noip){
+		tmp = gen_portrangeop(cstate, port1, port2, IPPROTO_TCP, dir);
 		gen_or(tmp, b1);
 		tmp = gen_portrangeop(cstate, port1, port2, IPPROTO_SCTP, dir);
 		gen_or(tmp, b1);
+	}
 		break;
 
 	default:
@@ -5579,8 +5587,10 @@ gen_portrange6(compiler_state_t *cstate, int port1, int port2, int ip_proto,
 		break;
 
 	case PROTO_UNDEF:
-		tmp = gen_portrangeop6(cstate, port1, port2, IPPROTO_TCP, dir);
+	if(!cstate->noip){
 		b1 = gen_portrangeop6(cstate, port1, port2, IPPROTO_UDP, dir);
+	}
+		tmp = gen_portrangeop6(cstate, port1, port2, IPPROTO_TCP, dir);
 		gen_or(tmp, b1);
 		tmp = gen_portrangeop6(cstate, port1, port2, IPPROTO_SCTP, dir);
 		gen_or(tmp, b1);
