@@ -419,6 +419,8 @@ struct _compiler_state {
 	 */
 	struct chunk chunks[NCHUNKS];
 	int cur_chunk;
+	
+	int noip;
 };
 
 void
@@ -656,7 +658,7 @@ syntax(compiler_state_t *cstate)
 
 int
 pcap_compile(pcap_t *p, struct bpf_program *program,
-	     const char *buf, int optimize, bpf_u_int32 mask)
+	     const char *buf, int optimize, bpf_u_int32 mask, int noip = 0)
 {
 	compiler_state_t cstate;
 	const char * volatile xbuf = buf;
@@ -700,6 +702,7 @@ pcap_compile(pcap_t *p, struct bpf_program *program,
 		goto quit;
 	}
 
+	cstate.noip = noip;
 	cstate.netmask = mask;
 
 	cstate.snaplen = pcap_snapshot(p);
@@ -761,7 +764,7 @@ quit:
 int
 pcap_compile_nopcap(int snaplen_arg, int linktype_arg,
 		    struct bpf_program *program,
-	     const char *buf, int optimize, bpf_u_int32 mask)
+	     const char *buf, int optimize, bpf_u_int32 mask, int noip = 0)
 {
 	pcap_t *p;
 	int ret;
@@ -769,7 +772,7 @@ pcap_compile_nopcap(int snaplen_arg, int linktype_arg,
 	p = pcap_open_dead(linktype_arg, snaplen_arg);
 	if (p == NULL)
 		return (-1);
-	ret = pcap_compile(p, program, buf, optimize, mask);
+	ret = pcap_compile(p, program, buf, optimize, mask, noip);
 	pcap_close(p);
 	return (ret);
 }
@@ -6906,7 +6909,8 @@ gen_load(compiler_state_t *cstate, int proto, struct arth *inst, int size)
 		 * IPv6 support, generate code to load either
 		 * IPv4, IPv6, or both, as appropriate.
 		 */
-		s = gen_loadx_iphdrlen(cstate);
+		 if(!cstate->noip){
+			s = gen_loadx_iphdrlen(cstate);
 
 		/*
 		 * The X register now contains the sum of the variable
@@ -6925,21 +6929,28 @@ gen_load(compiler_state_t *cstate, int proto, struct arth *inst, int size)
 		sappend(s, xfer_to_a(cstate, inst));
 		sappend(s, new_stmt(cstate, BPF_ALU|BPF_ADD|BPF_X));
 		sappend(s, new_stmt(cstate, BPF_MISC|BPF_TAX));
+		 }else{	 
+			s = xfer_to_x(cstate, inst);
+		 }
+		
 		sappend(s, tmp = new_stmt(cstate, BPF_LD|BPF_IND|size));
 		tmp->s.k = cstate->off_linkpl.constant_part + cstate->off_nl;
 		sappend(inst->s, s);
 
-		/*
-		 * Do the computation only if the packet contains
-		 * the protocol in question - which is true only
-		 * if this is an IP datagram and is the first or
-		 * only fragment of that datagram.
-		 */
-		gen_and(gen_proto_abbrev(cstate, proto), b = gen_ipfrag(cstate));
-		if (inst->b)
-			gen_and(inst->b, b);
-		gen_and(gen_proto_abbrev(cstate, Q_IP), b);
-		inst->b = b;
+		
+		 if(!cstate->noip){
+			/*
+			 * Do the computation only if the packet contains
+			 * the protocol in question - which is true only
+			 * if this is an IP datagram and is the first or
+			 * only fragment of that datagram.
+			 */
+			gen_and(gen_proto_abbrev(cstate, proto), b = gen_ipfrag(cstate));
+			if (inst->b)
+				gen_and(inst->b, b);
+			gen_and(gen_proto_abbrev(cstate, Q_IP), b);
+			inst->b = b;
+		 }
 		break;
 	case Q_ICMPV6:
 		bpf_error(cstate, "IPv6 upper-layer protocol is not supported by proto[x]");
