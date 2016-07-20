@@ -5416,8 +5416,13 @@ gen_portrangeop(compiler_state_t *cstate, int port1, int port2, int proto,
 	struct block *b0, *b1, *tmp;
 
 	/* ip proto 'proto' and not a fragment other than the first fragment */
-	tmp = gen_cmp(cstate, OR_LINKPL, 9, BPF_B, (bpf_int32)proto);
-	b0 = gen_ipfrag(cstate);
+	if(!cstate->noip){
+		tmp = gen_cmp(cstate, OR_LINKPL, 9, BPF_B, (bpf_int32)proto);
+		b0 = gen_ipfrag(cstate);
+	 }else{
+		 b0 = gen_true(cstate);
+	 }
+	
 	gen_and(tmp, b0);
 
 	switch (dir) {
@@ -5457,7 +5462,11 @@ gen_portrange(compiler_state_t *cstate, int port1, int port2, int ip_proto,
 	struct block *b0, *b1, *tmp;
 
 	/* link proto ip */
-	b0 = gen_linktype(cstate, ETHERTYPE_IP);
+	if(!cstate->noip){
+		b0 = gen_linktype(cstate, ETHERTYPE_IP);
+	 }else{
+		 b0 = gen_true(cstate);
+	 }
 
 	switch (ip_proto) {
 	case IPPROTO_UDP:
