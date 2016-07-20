@@ -1133,6 +1133,7 @@ static struct dlt_choice dlt_choices[] = {
 	DLT_CHOICE(DLT_FDDI, "FDDI"),
 	DLT_CHOICE(DLT_ATM_RFC1483, "RFC 1483 LLC-encapsulated ATM"),
 	DLT_CHOICE(DLT_RAW, "Raw IP"),
+	DLT_CHOICE(DLT_RAW_TRANSPORT, "Raw Transport Layer of IP protocols"),
 	DLT_CHOICE(DLT_SLIP_BSDOS, "BSD/OS SLIP"),
 	DLT_CHOICE(DLT_PPP_BSDOS, "BSD/OS PPP"),
 	DLT_CHOICE(DLT_ATM_CLIP, "Linux Classical IP-over-ATM"),

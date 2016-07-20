@@ -1292,6 +1292,11 @@
  */
 #define DLT_ISO_14443           264
 
+/*
+* Matching of Transport Layer data for IP packets (i.e UDP or TCP)
+*/
+#define DLT_RAW_TRANSPORT	265
+
 #define DLT_MATCHING_MAX	264	/* highest value in the "matching" range */
 
 /*

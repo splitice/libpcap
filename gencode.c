@@ -658,7 +658,7 @@ syntax(compiler_state_t *cstate)
 
 int
 pcap_compile(pcap_t *p, struct bpf_program *program,
-	     const char *buf, int optimize, bpf_u_int32 mask, int noip = 0)
+	     const char *buf, int optimize, bpf_u_int32 mask)
 {
 	compiler_state_t cstate;
 	const char * volatile xbuf = buf;
@@ -702,7 +702,7 @@ pcap_compile(pcap_t *p, struct bpf_program *program,
 		goto quit;
 	}
 
-	cstate.noip = noip;
+	cstate.noip = 0;
 	cstate.netmask = mask;
 
 	cstate.snaplen = pcap_snapshot(p);
@@ -764,7 +764,7 @@ quit:
 int
 pcap_compile_nopcap(int snaplen_arg, int linktype_arg,
 		    struct bpf_program *program,
-	     const char *buf, int optimize, bpf_u_int32 mask, int noip = 0)
+	     const char *buf, int optimize, bpf_u_int32 mask)
 {
 	pcap_t *p;
 	int ret;
@@ -1301,6 +1301,14 @@ init_linktype(compiler_state_t *cstate, pcap_t *p)
 		cstate->off_nl_nosnap = 3;	/* 802.2 */
 		break;
 
+	case DLT_RAW_TRANSPORT:
+		cstate->off_linktype.constant_part = -1;
+		cstate->off_linkpl.constant_part = 0;
+		cstate->off_nl = 0;
+		cstate->off_nl_nosnap = 0;	/* no 802.2 LLC */
+		cstate->noip = 1;
+		break;
+		
 	case DLT_RAW:
 	case DLT_IPV4:
 	case DLT_IPV6:
@@ -3055,6 +3063,9 @@ gen_linktype(compiler_state_t *cstate, int proto)
 		/*NOTREACHED*/
 		break;
 
+	case DLT_RAW_TRANSPORT:
+		return gen_false(true);
+		
 	case DLT_SLIP:
 	case DLT_SLIP_BSDOS:
 	case DLT_RAW:
