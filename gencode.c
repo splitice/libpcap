@@ -5208,9 +5208,14 @@ gen_portop(compiler_state_t *cstate, int port, int proto, int dir)
 	struct block *b0, *b1, *tmp;
 
 	/* ip proto 'proto' and not a fragment other than the first fragment */
-	tmp = gen_cmp(cstate, OR_LINKPL, 9, BPF_B, (bpf_int32)proto);
-	b0 = gen_ipfrag(cstate);
-	gen_and(tmp, b0);
+	
+	 if(!cstate->noip){
+		tmp = gen_cmp(cstate, OR_LINKPL, 9, BPF_B, (bpf_int32)proto);
+		b0 = gen_ipfrag(cstate);
+		gen_and(tmp, b0);
+	 }else{
+		 b0 = gen_true(cstate);
+	 }
 
 	switch (dir) {
 	case Q_SRC:
@@ -5264,7 +5269,12 @@ gen_port(compiler_state_t *cstate, int port, int ip_proto, int dir)
 	 *
 	 * So we always check for ETHERTYPE_IP.
 	 */
+	 
+	 if(!cstate->noip){
 	b0 = gen_linktype(cstate, ETHERTYPE_IP);
+	 }else{
+		 b0 = gen_true(cstate);
+	 }
 
 	switch (ip_proto) {
 	case IPPROTO_UDP:
@@ -5295,7 +5305,11 @@ gen_portop6(compiler_state_t *cstate, int port, int proto, int dir)
 
 	/* ip6 proto 'proto' */
 	/* XXX - catch the first fragment of a fragmented packet? */
-	b0 = gen_cmp(cstate, OR_LINKPL, 6, BPF_B, (bpf_int32)proto);
+	 if(!cstate->noip){
+		b0 = gen_cmp(cstate, OR_LINKPL, 6, BPF_B, (bpf_int32)proto);
+	 }else{
+		 b0 = gen_true(cstate);
+	 }
 
 	switch (dir) {
 	case Q_SRC:
@@ -5333,7 +5347,11 @@ gen_port6(compiler_state_t *cstate, int port, int ip_proto, int dir)
 	struct block *b0, *b1, *tmp;
 
 	/* link proto ip6 */
-	b0 = gen_linktype(cstate, ETHERTYPE_IPV6);
+	if(!cstate->noip){
+		b0 = gen_linktype(cstate, ETHERTYPE_IPV6);
+	 }else{
+		 b0 = gen_true(cstate);
+	 }
 
 	switch (ip_proto) {
 	case IPPROTO_UDP:
