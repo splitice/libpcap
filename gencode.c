@@ -772,7 +772,7 @@ pcap_compile_nopcap(int snaplen_arg, int linktype_arg,
 	p = pcap_open_dead(linktype_arg, snaplen_arg);
 	if (p == NULL)
 		return (-1);
-	ret = pcap_compile(p, program, buf, optimize, mask, noip);
+	ret = pcap_compile(p, program, buf, optimize, mask);
 	pcap_close(p);
 	return (ret);
 }
