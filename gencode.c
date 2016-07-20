@@ -1722,7 +1722,7 @@ gen_load_a(compiler_state_t *cstate, enum e_offrel offrel, u_int offset,
 		break;
 
 	case OR_TRAN_IPV6:
-		u_int offset = cstate->off_nl + offset;
+		offset += cstate->off_nl;
 		if(!cstate->noip){
 			offset += 40;
 		}
