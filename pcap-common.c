@@ -1186,7 +1186,9 @@
  */
 #define LINKTYPE_USB_2_0	288
 
-#define LINKTYPE_MATCHING_MAX	288		/* highest value in the "matching" range */
+#define LINKTYPE_RAW_TRANSPORT	289
+
+#define LINKTYPE_MATCHING_MAX	289		/* highest value in the "matching" range */
 
 /*
  * The DLT_ and LINKTYPE_ values in the "matching" range should be the
