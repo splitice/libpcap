@@ -7512,6 +7512,9 @@ gen_load_internal(compiler_state_t *cstate, int proto, struct arth *inst,
 		 */
 		 if(!cstate->noip){
 			s = gen_loadx_iphdrlen(cstate);
+		 }else{	 
+			s = xfer_to_x(cstate, inst);
+		 }
 
 		/*
 		 * The X register now contains the sum of the variable
@@ -7547,7 +7550,7 @@ gen_load_internal(compiler_state_t *cstate, int proto, struct arth *inst,
 				gen_and(inst->b, b);
 			gen_and(gen_proto_abbrev_internal(cstate, Q_IP), b);
 			inst->b = b;
-		 }
+		}
 		break;
 	case Q_ICMPV6:
         /*
