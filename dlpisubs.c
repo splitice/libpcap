@@ -12,7 +12,7 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include <config.h>
 #endif
 
 #ifndef DL_IPATM
@@ -114,6 +114,20 @@ pcap_stats_dlpi(pcap_t *p, struct pcap_stat *ps)
 }
 
 /*
+ * Does the processor for which we're compiling this support aligned loads?
+ */
+#if (defined(__i386__) || defined(_M_IX86) || defined(__X86__) || defined(__x86_64__) || defined(_M_X64)) || \
+    (defined(__arm__) || defined(_M_ARM) || defined(__aarch64__)) || \
+    (defined(__m68k__) && (!defined(__mc68000__) && !defined(__mc68010__))) || \
+    (defined(__ppc__) || defined(__ppc64__) || defined(_M_PPC) || defined(_ARCH_PPC) || defined(_ARCH_PPC64)) || \
+    (defined(__s390__) || defined(__s390x__) || defined(__zarch__))
+    /* Yes, it does. */
+#else
+    /* No, it doesn't. */
+    #define REQUIRE_ALIGNMENT
+#endif
+
+/*
  * Loop through the packets and call the callback for each packet.
  * Return the number of packets read.
  */
@@ -127,7 +141,7 @@ pcap_process_pkts(pcap_t *p, pcap_handler callback, u_char *user,
 	struct pcap_pkthdr pkthdr;
 #ifdef HAVE_SYS_BUFMOD_H
 	struct sb_hdr *sbp;
-#ifdef LBL_ALIGN
+#ifdef REQUIRE_ALIGNMENT
 	struct sb_hdr sbhdr;
 #endif
 #endif
@@ -157,7 +171,7 @@ pcap_process_pkts(pcap_t *p, pcap_handler callback, u_char *user,
 				return (n);
 			}
 		}
-#ifdef LBL_ALIGN
+#ifdef REQUIRE_ALIGNMENT
 		if ((long)bufp & 3) {
 			sbp = &sbhdr;
 			memcpy(sbp, bufp, sizeof(*sbp));
@@ -176,7 +190,7 @@ pcap_process_pkts(pcap_t *p, pcap_handler callback, u_char *user,
 		bufp += caplen;
 #endif
 		++pd->stat.ps_recv;
-		if (bpf_filter(p->fcode.bf_insns, pk, origlen, caplen)) {
+		if (pcap_filter(p->fcode.bf_insns, pk, origlen, caplen)) {
 #ifdef HAVE_SYS_BUFMOD_H
 			pkthdr.ts.tv_sec = sbp->sbh_timestamp.tv_sec;
 			pkthdr.ts.tv_usec = sbp->sbh_timestamp.tv_usec;
@@ -186,8 +200,8 @@ pcap_process_pkts(pcap_t *p, pcap_handler callback, u_char *user,
 			pkthdr.len = origlen;
 			pkthdr.caplen = caplen;
 			/* Insure caplen does not exceed snapshot */
-			if (pkthdr.caplen > p->snapshot)
-				pkthdr.caplen = p->snapshot;
+			if (pkthdr.caplen > (bpf_u_int32)p->snapshot)
+				pkthdr.caplen = (bpf_u_int32)p->snapshot;
 			(*callback)(user, &pkthdr, pk);
 			if (++n >= count && !PACKET_COUNT_IS_UNLIMITED(count)) {
 				p->cc = ep - bufp;
@@ -271,13 +285,22 @@ pcap_process_mactype(pcap_t *p, u_int mactype)
 
 #ifdef DL_IPNET
 	case DL_IPNET:
-		p->linktype = DLT_IPNET;
+		/*
+		 * XXX - DL_IPNET devices default to "raw IP" rather than
+		 * "IPNET header"; see
+		 *
+		 *    http://seclists.org/tcpdump/2009/q1/202
+		 *
+		 * We'd have to do DL_IOC_IPNET_INFO to enable getting
+		 * the IPNET header.
+		 */
+		p->linktype = DLT_RAW;
 		p->offset = 0;
 		break;
 #endif
 
 	default:
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "unknown mactype 0x%x",
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "unknown mactype 0x%x",
 		    mactype);
 		retv = -1;
 	}
@@ -349,7 +372,8 @@ pcap_alloc_databuf(pcap_t *p)
 	p->bufsize = PKTBUFSIZE;
 	p->buffer = malloc(p->bufsize + p->offset);
 	if (p->buffer == NULL) {
-		strlcpy(p->errbuf, pcap_strerror(errno), PCAP_ERRBUF_SIZE);
+		pcap_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
+		    errno, "malloc");
 		return (-1);
 	}
 
@@ -383,6 +407,6 @@ strioctl(int fd, int cmd, int len, char *dp)
 static void
 pcap_stream_err(const char *func, int err, char *errbuf)
 {
-	pcap_snprintf(errbuf, PCAP_ERRBUF_SIZE, "%s: %s", func, pcap_strerror(err));
+	pcap_fmt_errmsg_for_errno(errbuf, PCAP_ERRBUF_SIZE, err, "%s", func);
 }
 #endif

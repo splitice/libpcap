@@ -18,30 +18,21 @@
  * WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  *
- * pcap-common.c - common code for pcap and pcap-ng files
+ * pcap-common.c - common code for pcap and pcapng files
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include <config.h>
 #endif
 
-#ifdef _WIN32
-#include <pcap-stdinc.h>
-#else /* _WIN32 */
-#if HAVE_INTTYPES_H
-#include <inttypes.h>
-#elif HAVE_STDINT_H
-#include <stdint.h>
-#endif
-#ifdef HAVE_SYS_BITYPES_H
-#include <sys/bitypes.h>
-#endif
-#include <sys/types.h>
-#endif /* _WIN32 */
+#include <pcap-types.h>
 
 #include "pcap-int.h"
+#include "extract.h"
+#include "pcap/sll.h"
 #include "pcap/usb.h"
 #include "pcap/nflog.h"
+#include "pcap/can_socketcan.h"
 
 #include "pcap-common.h"
 
@@ -493,9 +484,14 @@
 
 /*
  * IEEE 802.15.4, exactly as it appears in the spec (no padding, no
- * nothing); requested by Mikko Saarnivala <mikko.saarnivala@sensinode.com>.
+ * nothing), and with the FCS at the end of the frame; requested by
+ * Mikko Saarnivala <mikko.saarnivala@sensinode.com>.
+ *
+ * This should only be used if the FCS is present at the end of the
+ * frame; if the frame has no FCS, DLT_IEEE802_15_4_NOFCS should be
+ * used.
  */
-#define LINKTYPE_IEEE802_15_4	195
+#define LINKTYPE_IEEE802_15_4_WITHFCS	195
 
 /*
  * Various link-layer types, with a pseudo-header, for SITA
@@ -518,11 +514,20 @@
 #define LINKTYPE_RAIF1		198
 
 /*
- * IPMB packet for IPMI, beginning with the I2C slave address, followed
- * by the netFn and LUN, etc..  Requested by Chanthy Toeung
- * <chanthy.toeung@ca.kontron.com>.
+ * IPMB packet for IPMI, beginning with a 2-byte header, followed by
+ * the I2C slave address, followed by the netFn and LUN, etc..
+ * Requested by Chanthy Toeung <chanthy.toeung@ca.kontron.com>.
+ *
+ * XXX - its DLT_ value used to be called DLT_IPMB, back when we got the
+ * impression from the email thread requesting it that the packet
+ * had no extra 2-byte header.  We've renamed it; if anybody used
+ * DLT_IPMB and assumed no 2-byte header, this will cause the compile
+ * to fail, at which point we'll have to figure out what to do about
+ * the two header types using the same DLT_/LINKTYPE_ value.  If that
+ * doesn't happen, we'll assume nobody used it and that the redefinition
+ * is safe.
  */
-#define LINKTYPE_IPMB		199
+#define LINKTYPE_IPMB_KONTRON	199
 
 /*
  * Juniper-private data link type, as per request from
@@ -554,14 +559,33 @@
 #define LINKTYPE_LAPD		203
 
 /*
- * Variants of various link-layer headers, with a one-byte direction
- * pseudo-header prepended - zero means "received by this host",
- * non-zero (any non-zero value) means "sent by this host" - as per
- * Will Barker <w.barker@zen.co.uk>.
+ * PPP, with a one-byte direction pseudo-header prepended - zero means
+ * "received by this host", non-zero (any non-zero value) means "sent by
+ * this host" - as per Will Barker <w.barker@zen.co.uk>.
  */
-#define LINKTYPE_PPP_WITH_DIR	204	/* PPP */
+#define LINKTYPE_PPP_WITH_DIR	204	/* Don't confuse with LINKTYPE_PPP_PPPD */
+
+/*
+ * Cisco HDLC, with a one-byte direction pseudo-header prepended - zero
+ * means "received by this host", non-zero (any non-zero value) means
+ * "sent by this host" - as per Will Barker <w.barker@zen.co.uk>.
+ */
 #define LINKTYPE_C_HDLC_WITH_DIR 205	/* Cisco HDLC */
+
+/*
+ * Frame Relay, with a one-byte direction pseudo-header prepended - zero
+ * means "received by this host" (DCE -> DTE), non-zero (any non-zero
+ * value) means "sent by this host" (DTE -> DCE) - as per Will Barker
+ * <w.barker@zen.co.uk>.
+ */
 #define LINKTYPE_FRELAY_WITH_DIR 206	/* Frame Relay */
+
+/*
+ * LAPB, with a one-byte direction pseudo-header prepended - zero means
+ * "received by this host" (DCE -> DTE), non-zero (any non-zero value)
+ * means "sent by this host" (DTE -> DCE)- as per Will Barker
+ * <w.barker@zen.co.uk>.
+ */
 #define LINKTYPE_LAPB_WITH_DIR	207	/* LAPB */
 
 /*
@@ -700,14 +724,14 @@
  * the pseudo-header is:
  *
  * struct dl_ipnetinfo {
- *     u_int8_t   dli_version;
- *     u_int8_t   dli_family;
- *     u_int16_t  dli_htype;
- *     u_int32_t  dli_pktlen;
- *     u_int32_t  dli_ifindex;
- *     u_int32_t  dli_grifindex;
- *     u_int32_t  dli_zsrc;
- *     u_int32_t  dli_zdst;
+ *     uint8_t   dli_version;
+ *     uint8_t   dli_family;
+ *     uint16_t  dli_htype;
+ *     uint32_t  dli_pktlen;
+ *     uint32_t  dli_ifindex;
+ *     uint32_t  dli_grifindex;
+ *     uint32_t  dli_zsrc;
+ *     uint32_t  dli_zdst;
  * };
  *
  * dli_version is 2 for the current version of the pseudo-header.
@@ -743,8 +767,10 @@
 
 /*
  * CAN (Controller Area Network) frames, with a pseudo-header as supplied
- * by Linux SocketCAN.  See Documentation/networking/can.txt in the Linux
- * source.
+ * by Linux SocketCAN, and with multi-byte numerical fields in that header
+ * in big-endian byte order.
+ *
+ * See Documentation/networking/can.txt in the Linux source.
  *
  * Requested by Felix Obenhuber <felix@obenhuber.de>.
  */
@@ -882,7 +908,7 @@
 
 /*
  * pfsync output; DLT_PFSYNC is 18, which collides with DLT_CIP in
- * SuSE 6.3, on OpenBSD, NetBSD, DragonFly BSD, and Mac OS X, and
+ * SuSE 6.3, on OpenBSD, NetBSD, DragonFly BSD, and macOS, and
  * is 121, which collides with DLT_HHDLC, in FreeBSD.  We pick a
  * shiny new link-layer header type value that doesn't collide with
  * anything, in the hopes that future pfsync savefiles, if any,
@@ -918,7 +944,7 @@
  *
  * Requested by Chris Bontje <chris_bontje@selinc.com>.
  */
-#define DLT_RTAC_SERIAL		250
+#define LINKTYPE_RTAC_SERIAL		250
 
 /*
  * Bluetooth Low Energy air interface link-layer packets.
@@ -979,7 +1005,7 @@
  * So I'll just give them one; hopefully this will show up in a
  * libpcap release in time for them to get this into 10.10 Big Sur
  * or whatever Mavericks' successor is called.  LINKTYPE_PKTAP
- * will be 258 *even on OS X*; that is *intentional*, so that
+ * will be 258 *even on macOS*; that is *intentional*, so that
  * PKTAP files look the same on *all* OSes (different OSes can have
  * different numerical values for a given DLT_, but *MUST NOT* have
  * different values for what goes in a file, as files can be moved
@@ -1017,7 +1043,159 @@
  */
 #define LINKTYPE_ISO_14443      264
 
-#define LINKTYPE_MATCHING_MAX	264		/* highest value in the "matching" range */
+/*
+ * Radio data system (RDS) groups.  IEC 62106.
+ * Per Jonathan Brucker <jonathan.brucke@gmail.com>.
+ */
+#define LINKTYPE_RDS		265
+
+/*
+ * USB packets, beginning with a Darwin (macOS, etc.) header.
+ */
+#define LINKTYPE_USB_DARWIN	266
+
+/*
+ * OpenBSD DLT_OPENFLOW.
+ */
+#define LINKTYPE_OPENFLOW	267
+
+/*
+ * SDLC frames containing SNA PDUs.
+ */
+#define LINKTYPE_SDLC		268
+
+/*
+ * per "Selvig, Bjorn" <b.selvig@ti.com> used for
+ * TI protocol sniffer.
+ */
+#define LINKTYPE_TI_LLN_SNIFFER	269
+
+/*
+ * per: Erik de Jong <erikdejong at gmail.com> for
+ *   https://github.com/eriknl/LoRaTap/releases/tag/v0.1
+ */
+#define LINKTYPE_LORATAP        270
+
+/*
+ * per: Stefanha at gmail.com for
+ *   http://lists.sandelman.ca/pipermail/tcpdump-workers/2017-May/000772.html
+ * and: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/linux/vsockmon.h
+ * for: http://qemu-project.org/Features/VirtioVsock
+ */
+#define LINKTYPE_VSOCK          271
+
+/*
+ * Nordic Semiconductor Bluetooth LE sniffer.
+ */
+#define LINKTYPE_NORDIC_BLE	272
+
+/*
+ * Excentis DOCSIS 3.1 RF sniffer (XRA-31)
+ *   per: bruno.verstuyft at excentis.com
+ *        http://www.xra31.com/xra-header
+ */
+#define LINKTYPE_DOCSIS31_XRA31	273
+
+/*
+ * mPackets, as specified by IEEE 802.3br Figure 99-4, starting
+ * with the preamble and always ending with a CRC field.
+ */
+#define LINKTYPE_ETHERNET_MPACKET	274
+
+/*
+ * DisplayPort AUX channel monitoring data as specified by VESA
+ * DisplayPort(DP) Standard preceeded by a pseudo-header.
+ *    per dirk.eibach at gdsys.cc
+ */
+#define LINKTYPE_DISPLAYPORT_AUX	275
+
+/*
+ * Linux cooked sockets v2.
+ */
+#define LINKTYPE_LINUX_SLL2	276
+
+/*
+ * Sercos Monitor, per Manuel Jacob <manuel.jacob at steinbeis-stg.de>
+ */
+#define LINKTYPE_SERCOS_MONITOR 277
+
+/*
+ * OpenVizsla http://openvizsla.org is open source USB analyzer hardware.
+ * It consists of FPGA with attached USB phy and FTDI chip for streaming
+ * the data to the host PC.
+ *
+ * Current OpenVizsla data encapsulation format is described here:
+ * https://github.com/matwey/libopenvizsla/wiki/OpenVizsla-protocol-description
+ *
+ */
+#define LINKTYPE_OPENVIZSLA     278
+
+/*
+ * The Elektrobit High Speed Capture and Replay (EBHSCR) protocol is produced
+ * by a PCIe Card for interfacing high speed automotive interfaces.
+ *
+ * The specification for this frame format can be found at:
+ *   http://www.elektrobit.com/ebhscr
+ *
+ * for Guenter.Ebermann at elektrobit.com
+ *
+ */
+#define LINKTYPE_EBHSCR	        279
+
+/*
+ * The http://fd.io vpp graph dispatch tracer produces pcap trace files
+ * in the format documented here:
+ * https://fdio-vpp.readthedocs.io/en/latest/gettingstarted/developers/vnet.html#graph-dispatcher-pcap-tracing
+ */
+#define LINKTYPE_VPP_DISPATCH	280
+
+/*
+ * Broadcom Ethernet switches (ROBO switch) 4 bytes proprietary tagging format.
+ */
+#define LINKTYPE_DSA_TAG_BRCM	281
+#define LINKTYPE_DSA_TAG_BRCM_PREPEND	282
+
+/*
+ * IEEE 802.15.4 with pseudo-header and optional meta-data TLVs, PHY payload
+ * exactly as it appears in the spec (no padding, no nothing), and FCS if
+ * specified by FCS Type TLV;  requested by James Ko <jck@exegin.com>.
+ * Specification at https://github.com/jkcko/ieee802.15.4-tap
+ */
+#define LINKTYPE_IEEE802_15_4_TAP       283
+
+/*
+ * Marvell (Ethertype) Distributed Switch Architecture proprietary tagging format.
+ */
+#define LINKTYPE_DSA_TAG_DSA	284
+#define LINKTYPE_DSA_TAG_EDSA	285
+
+/*
+ * Payload of lawful intercept packets using the ELEE protocol;
+ * http://socket.hr/draft-dfranusic-opsawg-elee-00.xml
+ * http://xml2rfc.tools.ietf.org/cgi-bin/xml2rfc.cgi?url=http://socket.hr/draft-dfranusic-opsawg-elee-00.xml&modeAsFormat=html/ascii
+ */
+#define LINKTYPE_ELEE		286
+
+/*
+ * Serial frames transmitted between a host and a Z-Wave chip.
+ */
+#define LINKTYPE_Z_WAVE_SERIAL	287
+
+/*
+ * USB 2.0, 1.1, and 1.0 packets as transmitted over the cable.
+ */
+#define LINKTYPE_USB_2_0	288
+
+#define LINKTYPE_MATCHING_MAX	288		/* highest value in the "matching" range */
+
+/*
+ * The DLT_ and LINKTYPE_ values in the "matching" range should be the
+ * same, so DLT_MATCHING_MAX and LINKTYPE_MATCHING_MAX should be the
+ * same.
+ */
+#if LINKTYPE_MATCHING_MAX != DLT_MATCHING_MAX
+#error The LINKTYPE_ matching range does not match the DLT_ matching range
+#endif
 
 static struct linktype_map {
 	int	dlt;
@@ -1037,7 +1215,7 @@ static struct linktype_map {
 	{ DLT_ARCNET,		LINKTYPE_ARCNET_BSD },
 	{ DLT_SLIP,		LINKTYPE_SLIP },
 	{ DLT_PPP,		LINKTYPE_PPP },
-	{ DLT_FDDI,	 	LINKTYPE_FDDI },
+	{ DLT_FDDI,		LINKTYPE_FDDI },
 	{ DLT_SYMANTEC_FIREWALL, LINKTYPE_SYMANTEC_FIREWALL },
 
 	/*
@@ -1165,6 +1343,82 @@ linktype_to_dlt(int linktype)
 }
 
 /*
+ * Return the maximum snapshot length for a given DLT_ value.
+ *
+ * For most link-layer types, we use MAXIMUM_SNAPLEN.
+ *
+ * For DLT_DBUS, the maximum is 128MiB, as per
+ *
+ *    https://dbus.freedesktop.org/doc/dbus-specification.html#message-protocol-messages
+ *
+ * For DLT_EBHSCR, the maximum is 8MiB, as per
+ *
+ *    https://www.elektrobit.com/ebhscr
+ *
+ * For DLT_USBPCAP, the maximum is 1MiB, as per
+ *
+ *    https://bugs.wireshark.org/bugzilla/show_bug.cgi?id=15985
+ */
+u_int
+max_snaplen_for_dlt(int dlt)
+{
+	switch (dlt) {
+
+	case DLT_DBUS:
+		return 128*1024*1024;
+
+	case DLT_EBHSCR:
+		return 8*1024*1024;
+
+	case DLT_USBPCAP:
+		return 1024*1024;
+
+	default:
+		return MAXIMUM_SNAPLEN;
+	}
+}
+
+/*
+ * DLT_LINUX_SLL packets with a protocol type of LINUX_SLL_P_CAN or
+ * LINUX_SLL_P_CANFD have SocketCAN headers in front of the payload,
+ * with the CAN ID being in host byte order.
+ *
+ * When reading a DLT_LINUX_SLL capture file, we need to check for those
+ * packets and convert the CAN ID from the byte order of the host that
+ * wrote the file to this host's byte order.
+ */
+static void
+swap_linux_sll_header(const struct pcap_pkthdr *hdr, u_char *buf)
+{
+	u_int caplen = hdr->caplen;
+	u_int length = hdr->len;
+	struct sll_header *shdr = (struct sll_header *)buf;
+	uint16_t protocol;
+	pcap_can_socketcan_hdr *chdr;
+
+	if (caplen < (u_int) sizeof(struct sll_header) ||
+	    length < (u_int) sizeof(struct sll_header)) {
+		/* Not enough data to have the protocol field */
+		return;
+	}
+
+	protocol = EXTRACT_BE_U_2(&shdr->sll_protocol);
+	if (protocol != LINUX_SLL_P_CAN && protocol != LINUX_SLL_P_CANFD)
+		return;
+
+	/*
+	 * SocketCAN packet; fix up the packet's header.
+	 */
+	chdr = (pcap_can_socketcan_hdr *)(buf + sizeof(struct sll_header));
+	if (caplen < (u_int) sizeof(struct sll_header) + sizeof(chdr->can_id) ||
+	    length < (u_int) sizeof(struct sll_header) + sizeof(chdr->can_id)) {
+		/* Not enough data to have the CAN ID */
+		return;
+	}
+	chdr->can_id = SWAPLONG(chdr->can_id);
+}
+
+/*
  * The DLT_USB_LINUX and DLT_USB_LINUX_MMAPPED headers are in host
  * byte order when capturing (it's supplied directly from a
  * memory-mapped buffer shared by the kernel).
@@ -1285,7 +1539,7 @@ swap_linux_usb_header(const struct pcap_pkthdr *hdr, u_char *buf,
 		if (uhdr->transfer_type == URB_ISOCHRONOUS) {
 			/* swap the values in struct linux_usb_isodesc */
 			usb_isodesc *pisodesc;
-			u_int32_t i;
+			uint32_t i;
 
 			pisodesc = (usb_isodesc *)(void *)(buf+offset);
 			for (i = 0; i < uhdr->ndesc; i++) {
@@ -1331,9 +1585,10 @@ swap_nflog_header(const struct pcap_pkthdr *hdr, u_char *buf)
 	nflog_tlv_t *tlv;
 	u_int caplen = hdr->caplen;
 	u_int length = hdr->len;
-	u_int16_t size;
+	uint16_t size;
 
-	if (caplen < (int) sizeof(nflog_hdr_t) || length < (int) sizeof(nflog_hdr_t)) {
+	if (caplen < (u_int) sizeof(nflog_hdr_t) ||
+	    length < (u_int) sizeof(nflog_hdr_t)) {
 		/* Not enough data to have any TLVs. */
 		return;
 	}
@@ -1387,6 +1642,10 @@ swap_pseudo_headers(int linktype, struct pcap_pkthdr *hdr, u_char *data)
 	 * byte order, as necessary.
 	 */
 	switch (linktype) {
+
+	case DLT_LINUX_SLL:
+		swap_linux_sll_header(hdr, data);
+		break;
 
 	case DLT_USB_LINUX:
 		swap_linux_usb_header(hdr, data, 0);

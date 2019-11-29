@@ -20,7 +20,7 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include <config.h>
 #endif
 
 #include <sys/types.h>
@@ -43,7 +43,6 @@
 #include <netinet/tcp.h>
 #include <netinet/tcpip.h>
 
-#include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 
@@ -114,8 +113,8 @@ pcap_read_nit(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 		if (cc < 0) {
 			if (errno == EWOULDBLOCK)
 				return (0);
-			pcap_snprintf(p->errbuf, sizeof(p->errbuf), "pcap_read: %s",
-				pcap_strerror(errno));
+			pcap_fmt_errmsg_for_errno(p->errbuf, sizeof(p->errbuf),
+			    errno, "pcap_read");
 			return (-1);
 		}
 		bp = (u_char *)p->buffer;
@@ -168,7 +167,7 @@ pcap_read_nit(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 			continue;
 
 		default:
-			pcap_snprintf(p->errbuf, sizeof(p->errbuf),
+			snprintf(p->errbuf, sizeof(p->errbuf),
 			    "bad nit state %d", nh->nh_state);
 			return (-1);
 		}
@@ -179,7 +178,7 @@ pcap_read_nit(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 		caplen = nh->nh_wirelen;
 		if (caplen > p->snapshot)
 			caplen = p->snapshot;
-		if (bpf_filter(p->fcode.bf_insns, cp, nh->nh_wirelen, caplen)) {
+		if (pcap_filter(p->fcode.bf_insns, cp, nh->nh_wirelen, caplen)) {
 			struct pcap_pkthdr h;
 			h.ts = nh->nh_timestamp;
 			h.len = nh->nh_wirelen;
@@ -197,7 +196,7 @@ pcap_read_nit(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 }
 
 static int
-pcap_inject_nit(pcap_t *p, const void *buf, size_t size)
+pcap_inject_nit(pcap_t *p, const void *buf, int size)
 {
 	struct sockaddr sa;
 	int ret;
@@ -206,8 +205,8 @@ pcap_inject_nit(pcap_t *p, const void *buf, size_t size)
 	strncpy(sa.sa_data, device, sizeof(sa.sa_data));
 	ret = sendto(p->fd, buf, size, 0, &sa, sizeof(sa));
 	if (ret == -1) {
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send: %s",
-		    pcap_strerror(errno));
+		pcap_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
+		    errno, "send");
 		return (-1);
 	}
 	return (ret);
@@ -249,8 +248,8 @@ nit_setflags(pcap_t *p)
 		nioc.nioc_flags |= NF_PROMISC;
 
 	if (ioctl(p->fd, SIOCSNIT, &nioc) < 0) {
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "SIOCSNIT: %s",
-		    pcap_strerror(errno));
+		pcap_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
+		    errno, "SIOCSNIT");
 		return (-1);
 	}
 	return (0);
@@ -271,6 +270,17 @@ pcap_activate_nit(pcap_t *p)
 		return (PCAP_ERROR_RFMON_NOTSUP);
 	}
 
+	/*
+	 * Turn a negative snapshot value (invalid), a snapshot value of
+	 * 0 (unspecified), or a value bigger than the normal maximum
+	 * value, into the maximum allowed value.
+	 *
+	 * If some application really *needs* a bigger snapshot
+	 * length, we should just increase MAXIMUM_SNAPLEN.
+	 */
+	if (p->snapshot <= 0 || p->snapshot > MAXIMUM_SNAPLEN)
+		p->snapshot = MAXIMUM_SNAPLEN;
+
 	if (p->snapshot < 96)
 		/*
 		 * NIT requires a snapshot length of at least 96.
@@ -280,8 +290,8 @@ pcap_activate_nit(pcap_t *p)
 	memset(p, 0, sizeof(*p));
 	p->fd = fd = socket(AF_NIT, SOCK_RAW, NITPROTO_RAW);
 	if (fd < 0) {
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
-		    "socket: %s", pcap_strerror(errno));
+		pcap_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
+		    errno, "socket");
 		goto bad;
 	}
 	snit.snit_family = AF_NIT;
@@ -295,8 +305,8 @@ pcap_activate_nit(pcap_t *p)
 		 * they might be the same error, if they both end up
 		 * meaning "NIT doesn't know about that device".
 		 */
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
-		    "bind: %s: %s", snit.snit_ifname, pcap_strerror(errno));
+		pcap_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
+		    errno, "bind: %s", snit.snit_ifname);
 		goto bad;
 	}
 	if (nit_setflags(p) < 0)
@@ -310,7 +320,8 @@ pcap_activate_nit(pcap_t *p)
 	p->bufsize = BUFSPACE;
 	p->buffer = malloc(p->bufsize);
 	if (p->buffer == NULL) {
-		strlcpy(p->errbuf, pcap_strerror(errno), PCAP_ERRBUF_SIZE);
+		pcap_fmt_errmsg_for_errno(p->errbuf, PCAP_ERRBUF_SIZE,
+		    errno, "malloc");
 		goto bad;
 	}
 
@@ -377,8 +388,29 @@ can_be_bound(const char *name _U_)
 	return (1);
 }
 
-int
-pcap_platform_finddevs(pcap_if_t **alldevsp, char *errbuf)
+static int
+get_if_flags(const char *name _U_, bpf_u_int32 *flags _U_, char *errbuf _U_)
 {
-	return (pcap_findalldevs_interfaces(alldevsp, errbuf, can_be_bound));
+	/*
+	 * Nothing we can do.
+	 * XXX - is there a way to find out whether an adapter has
+	 * something plugged into it?
+	 */
+	return (0);
+}
+
+int
+pcap_platform_finddevs(pcap_if_list_t *devlistp, char *errbuf)
+{
+	return (pcap_findalldevs_interfaces(devlistp, errbuf, can_be_bound,
+	    get_if_flags));
+}
+
+/*
+ * Libpcap version string.
+ */
+const char *
+pcap_lib_version(void)
+{
+	return (PCAP_VERSION_STRING);
 }

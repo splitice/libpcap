@@ -30,7 +30,7 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include <config.h>
 #endif
 
 #include <pcap.h>
@@ -120,13 +120,12 @@ typedef struct _TC_FUNCTIONS
 
 static pcap_if_t* TcCreatePcapIfFromPort(TC_PORT port);
 static int TcSetDatalink(pcap_t *p, int dlt);
-static int TcGetNonBlock(pcap_t *p, char *errbuf);
-static int TcSetNonBlock(pcap_t *p, int nonblock, char *errbuf);
+static int TcGetNonBlock(pcap_t *p);
+static int TcSetNonBlock(pcap_t *p, int nonblock);
 static void TcCleanup(pcap_t *p);
-static int TcInject(pcap_t *p, const void *buf, size_t size);
+static int TcInject(pcap_t *p, const void *buf, int size);
 static int TcRead(pcap_t *p, int cnt, pcap_handler callback, u_char *user);
 static int TcStats(pcap_t *p, struct pcap_stat *ps);
-static int TcSetFilter(pcap_t *p, struct bpf_program *fp);
 #ifdef _WIN32
 static struct pcap_stat *TcStatsEx(pcap_t *p, int *pcap_stat_size);
 static int TcSetBuff(pcap_t *p, int dim);
@@ -433,14 +432,14 @@ struct pcap_tc {
 };
 
 int
-TcFindAllDevs(pcap_if_t **alldevsp, char *errbuf)
+TcFindAllDevs(pcap_if_list_t *devlist, char *errbuf)
 {
 	TC_API_LOAD_STATUS loadStatus;
 	ULONG numPorts;
 	PTC_PORT pPorts = NULL;
 	TC_STATUS status;
 	int result = 0;
-	pcap_if_t *dev, *cursor;
+	pcap_if_t *dev;
 	ULONG i;
 
 	do
@@ -472,20 +471,7 @@ TcFindAllDevs(pcap_if_t **alldevsp, char *errbuf)
 			dev = TcCreatePcapIfFromPort(pPorts[i]);
 
 			if (dev != NULL)
-			{
-				/*
-				 * append it at the end
-				 */
-				if (*alldevsp == NULL)
-				{
-					*alldevsp = dev;
-				}
-				else
-				{
-					for(cursor = *alldevsp; cursor->next != NULL; cursor = cursor->next);
-					cursor->next = dev;
-				}
-			}
+				add_dev(devlist, dev->name, dev->flags, dev->description, errbuf);
 		}
 
 		if (numPorts > 0)
@@ -565,9 +551,20 @@ TcActivate(pcap_t *p)
 
 	if (pt->PpiPacket == NULL)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "Error allocating memory");
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "Error allocating memory");
 		return PCAP_ERROR;
 	}
+
+	/*
+	 * Turn a negative snapshot value (invalid), a snapshot value of
+	 * 0 (unspecified), or a value bigger than the normal maximum
+	 * value, into the maximum allowed value.
+	 *
+	 * If some application really *needs* a bigger snapshot
+	 * length, we should just increase MAXIMUM_SNAPLEN.
+	 */
+	if (p->snapshot <= 0 || p->snapshot > MAXIMUM_SNAPLEN)
+		p->snapshot = MAXIMUM_SNAPLEN;
 
 	/*
 	 * Initialize the PPI fixed fields
@@ -589,7 +586,7 @@ TcActivate(pcap_t *p)
 	if (status != TC_SUCCESS)
 	{
 		/* Adapter detected but we are not able to open it. Return failure. */
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "Error opening TurboCap adapter: %s", g_TcFunctions.StatusGetString(status));
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "Error opening TurboCap adapter: %s", g_TcFunctions.StatusGetString(status));
 		return PCAP_ERROR;
 	}
 
@@ -621,7 +618,7 @@ TcActivate(pcap_t *p)
 
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,"Error enabling reception on a TurboCap instance: %s", g_TcFunctions.StatusGetString(status));
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE,"Error enabling reception on a TurboCap instance: %s", g_TcFunctions.StatusGetString(status));
 		goto bad;
 	}
 
@@ -660,12 +657,12 @@ TcActivate(pcap_t *p)
 
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,"Error setting the read timeout a TurboCap instance: %s", g_TcFunctions.StatusGetString(status));
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE,"Error setting the read timeout a TurboCap instance: %s", g_TcFunctions.StatusGetString(status));
 		goto bad;
 	}
 
 	p->read_op = TcRead;
-	p->setfilter_op = TcSetFilter;
+	p->setfilter_op = install_bpf_program;
 	p->setdirection_op = NULL;	/* Not implemented. */
 	p->set_datalink_op = TcSetDatalink;
 	p->getnonblock_op = TcGetNonBlock;
@@ -763,35 +760,47 @@ TcCreate(const char *device, char *ebuf, int *is_ours)
 		return NULL;
 
 	p->activate_op = TcActivate;
+	/*
+	 * Set these up front, so that, even if our client tries
+	 * to set non-blocking mode before we're activated, or
+	 * query the state of non-blocking mode, they get an error,
+	 * rather than having the non-blocking mode option set
+	 * for use later.
+	 */
+	p->getnonblock_op = TcGetNonBlock;
+	p->setnonblock_op = TcSetNonBlock;
 	return p;
 }
 
 static int TcSetDatalink(pcap_t *p, int dlt)
 {
 	/*
-	 * always return 0, as the check is done by pcap_set_datalink
+	 * We don't have to do any work here; pcap_set_datalink() checks
+	 * whether the value is in the list of DLT_ values we
+	 * supplied, so we don't have to, and, if it is valid, sets
+	 * p->linktype to the new value; we don't have to do anything
+	 * in hardware, we just use what's in p->linktype.
+	 *
+	 * We do have to have a routine, however, so that pcap_set_datalink()
+	 * doesn't think we don't support setting the link-layer header
+	 * type at all.
 	 */
 	return 0;
 }
 
-static int TcGetNonBlock(pcap_t *p, char *errbuf)
+static int TcGetNonBlock(pcap_t *p)
 {
-	pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
-		    "Getting the non blocking status is not available for TurboCap ports");
-	pcap_snprintf(errbuf, PCAP_ERRBUF_SIZE,
-		    "Getting the non blocking status is not available for TurboCap ports");
-		return -1;
-
-}
-static int TcSetNonBlock(pcap_t *p, int nonblock, char *errbuf)
-{
-	pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
-		    "Setting the non blocking status is not available for TurboCap ports");
-	pcap_snprintf(errbuf, PCAP_ERRBUF_SIZE,
-		    "Setting the non blocking status is not available for TurboCap ports");
-		return -1;
+	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+	    "Non-blocking mode isn't supported for TurboCap ports");
+	return -1;
 }
 
+static int TcSetNonBlock(pcap_t *p, int nonblock)
+{
+	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+	    "Non-blocking mode isn't supported for TurboCap ports");
+	return -1;
+}
 
 static void TcCleanup(pcap_t *p)
 {
@@ -821,7 +830,7 @@ static void TcCleanup(pcap_t *p)
 }
 
 /* Send a packet to the network */
-static int TcInject(pcap_t *p, const void *buf, size_t size)
+static int TcInject(pcap_t *p, const void *buf, int size)
 {
 	struct pcap_tc *pt = p->priv;
 	TC_STATUS status;
@@ -830,7 +839,7 @@ static int TcInject(pcap_t *p, const void *buf, size_t size)
 
 	if (size >= 0xFFFF)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send error: the TurboCap API does not support packets larger than 64k");
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send error: the TurboCap API does not support packets larger than 64k");
 		return -1;
 	}
 
@@ -838,7 +847,7 @@ static int TcInject(pcap_t *p, const void *buf, size_t size)
 
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send error: TcPacketsBufferCreate failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send error: TcPacketsBufferCreate failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 		return -1;
 	}
 
@@ -858,12 +867,12 @@ static int TcInject(pcap_t *p, const void *buf, size_t size)
 
 		if (status != TC_SUCCESS)
 		{
-			pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send error: TcInstanceTransmitPackets failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+			snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send error: TcInstanceTransmitPackets failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 		}
 	}
 	else
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send error: TcPacketsBufferCommitNextPacket failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "send error: TcPacketsBufferCommitNextPacket failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 	}
 
 	g_TcFunctions.PacketsBufferDestroy(buffer);
@@ -903,7 +912,7 @@ static int TcRead(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 		status = g_TcFunctions.InstanceReceivePackets(pt->TcInstance, &pt->TcPacketsBuffer);
 		if (status != TC_SUCCESS)
 		{
-			pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "read error, TcInstanceReceivePackets failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+			snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "read error, TcInstanceReceivePackets failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 			return -1;
 		}
 	}
@@ -953,14 +962,14 @@ static int TcRead(pcap_t *p, int cnt, pcap_handler callback, u_char *user)
 
 		if (status != TC_SUCCESS)
 		{
-			pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "read error, TcPacketsBufferQueryNextPacket failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+			snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "read error, TcPacketsBufferQueryNextPacket failure: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 			return -1;
 		}
 
 		/* No underlaying filtering system. We need to filter on our own */
 		if (p->fcode.bf_insns)
 		{
-			filterResult = bpf_filter(p->fcode.bf_insns, data, tcHeader.Length, tcHeader.CapturedLength);
+			filterResult = pcap_filter(p->fcode.bf_insns, data, tcHeader.Length, tcHeader.CapturedLength);
 
 			if (filterResult == 0)
 			{
@@ -1043,7 +1052,7 @@ TcStats(pcap_t *p, struct pcap_stat *ps)
 
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcInstanceQueryStatistics: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcInstanceQueryStatistics: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 		return -1;
 	}
 
@@ -1052,7 +1061,7 @@ TcStats(pcap_t *p, struct pcap_stat *ps)
 	status = g_TcFunctions.StatisticsQueryValue(statistics, TC_COUNTER_INSTANCE_TOTAL_RX_PACKETS, &counter);
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcStatisticsQueryValue: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcStatisticsQueryValue: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 		return -1;
 	}
 	if (counter <= (ULONGLONG)0xFFFFFFFF)
@@ -1067,7 +1076,7 @@ TcStats(pcap_t *p, struct pcap_stat *ps)
 	status = g_TcFunctions.StatisticsQueryValue(statistics, TC_COUNTER_INSTANCE_RX_DROPPED_PACKETS, &counter);
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcStatisticsQueryValue: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcStatisticsQueryValue: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 		return -1;
 	}
 	if (counter <= (ULONGLONG)0xFFFFFFFF)
@@ -1081,7 +1090,7 @@ TcStats(pcap_t *p, struct pcap_stat *ps)
 		s.ps_drop = 0xFFFFFFFF;
 	}
 
-#if defined(_WIN32) && defined(HAVE_REMOTE)
+#if defined(_WIN32) && defined(ENABLE_REMOTE)
 	s.ps_capt = pt->TcAcceptedCount;
 #endif
 	*ps = s;
@@ -1089,29 +1098,6 @@ TcStats(pcap_t *p, struct pcap_stat *ps)
 	return 0;
 }
 
-
-/*
- * We filter at user level, since the kernel driver does't process the packets
- */
-static int
-TcSetFilter(pcap_t *p, struct bpf_program *fp)
-{
-	if(!fp)
-	{
-		strncpy(p->errbuf, "setfilter: No filter specified", sizeof(p->errbuf));
-		return -1;
-	}
-
-	/* Install a user level filter */
-	if (install_bpf_program(p, fp) < 0)
-	{
-		pcap_snprintf(p->errbuf, sizeof(p->errbuf),
-			"setfilter, unable to install the filter: %s", pcap_strerror(errno));
-		return -1;
-	}
-
-	return 0;
-}
 
 #ifdef _WIN32
 static struct pcap_stat *
@@ -1128,7 +1114,7 @@ TcStatsEx(pcap_t *p, int *pcap_stat_size)
 
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcInstanceQueryStatistics: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcInstanceQueryStatistics: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 		return NULL;
 	}
 
@@ -1137,7 +1123,7 @@ TcStatsEx(pcap_t *p, int *pcap_stat_size)
 	status = g_TcFunctions.StatisticsQueryValue(statistics, TC_COUNTER_INSTANCE_TOTAL_RX_PACKETS, &counter);
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcStatisticsQueryValue: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcStatisticsQueryValue: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 		return NULL;
 	}
 	if (counter <= (ULONGLONG)0xFFFFFFFF)
@@ -1152,7 +1138,7 @@ TcStatsEx(pcap_t *p, int *pcap_stat_size)
 	status = g_TcFunctions.StatisticsQueryValue(statistics, TC_COUNTER_INSTANCE_RX_DROPPED_PACKETS, &counter);
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcStatisticsQueryValue: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error in TcStatisticsQueryValue: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 		return NULL;
 	}
 	if (counter <= (ULONGLONG)0xFFFFFFFF)
@@ -1166,7 +1152,7 @@ TcStatsEx(pcap_t *p, int *pcap_stat_size)
 		p->stat.ps_drop = 0xFFFFFFFF;
 	}
 
-#ifdef HAVE_REMOTE
+#if defined(_WIN32) && defined(ENABLE_REMOTE)
 	p->stat.ps_capt = pt->TcAcceptedCount;
 #endif
 
@@ -1190,7 +1176,7 @@ TcSetMode(pcap_t *p, int mode)
 {
 	if (mode != MODE_CAPT)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "Mode %u not supported by TurboCap devices. TurboCap only supports capture.", mode);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "Mode %u not supported by TurboCap devices. TurboCap only supports capture.", mode);
 		return -1;
 	}
 
@@ -1205,7 +1191,7 @@ TcSetMinToCopy(pcap_t *p, int size)
 
 	if (size < 0)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "Mintocopy cannot be less than 0.");
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "Mintocopy cannot be less than 0.");
 		return -1;
 	}
 
@@ -1213,7 +1199,7 @@ TcSetMinToCopy(pcap_t *p, int size)
 
 	if (status != TC_SUCCESS)
 	{
-		pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error setting the mintocopy: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
+		snprintf(p->errbuf, PCAP_ERRBUF_SIZE, "TurboCap error setting the mintocopy: %s (%08x)", g_TcFunctions.StatusGetString(status), status);
 	}
 
 	return 0;
@@ -1230,7 +1216,7 @@ TcGetReceiveWaitHandle(pcap_t *p)
 static int
 TcOidGetRequest(pcap_t *p, bpf_u_int32 oid _U_, void *data _U_, size_t *lenp _U_)
 {
-	pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 	    "An OID get request cannot be performed on a TurboCap device");
 	return PCAP_ERROR;
 }
@@ -1239,7 +1225,7 @@ static int
 TcOidSetRequest(pcap_t *p, bpf_u_int32 oid _U_, const void *data _U_,
     size_t *lenp _U_)
 {
-	pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 	    "An OID set request cannot be performed on a TurboCap device");
 	return PCAP_ERROR;
 }
@@ -1247,7 +1233,7 @@ TcOidSetRequest(pcap_t *p, bpf_u_int32 oid _U_, const void *data _U_,
 static u_int
 TcSendqueueTransmit(pcap_t *p, pcap_send_queue *queue _U_, int sync _U_)
 {
-	pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 	    "Packets cannot be bulk transmitted on a TurboCap device");
 	return 0;
 }
@@ -1255,7 +1241,7 @@ TcSendqueueTransmit(pcap_t *p, pcap_send_queue *queue _U_, int sync _U_)
 static int
 TcSetUserBuffer(pcap_t *p, int size _U_)
 {
-	pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 	    "The user buffer cannot be set on a TurboCap device");
 	return -1;
 }
@@ -1263,7 +1249,7 @@ TcSetUserBuffer(pcap_t *p, int size _U_)
 static int
 TcLiveDump(pcap_t *p, char *filename _U_, int maxsize _U_, int maxpacks _U_)
 {
-	pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 	    "Live packet dumping cannot be performed on a TurboCap device");
 	return -1;
 }
@@ -1271,7 +1257,7 @@ TcLiveDump(pcap_t *p, char *filename _U_, int maxsize _U_, int maxpacks _U_)
 static int
 TcLiveDumpEnded(pcap_t *p, int sync _U_)
 {
-	pcap_snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
+	snprintf(p->errbuf, PCAP_ERRBUF_SIZE,
 	    "Live packet dumping cannot be performed on a TurboCap device");
 	return -1;
 }
