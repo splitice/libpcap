@@ -7513,7 +7513,7 @@ gen_load_internal(compiler_state_t *cstate, int proto, struct arth *inst,
 		 if(!cstate->noip){
 			s = gen_loadx_iphdrlen(cstate);
 		 }else{	
-			s = new_stmt(cstate, BPF_LDX|BPF_B|BPF_ABS);
+			s = new_stmt(cstate, BPF_LDX);
             s->s.k = cstate->off_linkpl.constant_part + cstate->off_nl;
 		 }
 
