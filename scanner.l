@@ -336,6 +336,7 @@ not		return '!';
 len|length	return LEN;
 inbound		return INBOUND;
 outbound	return OUTBOUND;
+returnval   return RETURNVAL;
 
 vlan		return VLAN;
 mpls		return MPLS;

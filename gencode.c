@@ -484,7 +484,6 @@ static void *newchunk(compiler_state_t *cstate, size_t);
 static void freechunks(compiler_state_t *cstate);
 static inline struct block *new_block(compiler_state_t *cstate, int);
 static inline struct slist *new_stmt(compiler_state_t *cstate, int);
-static struct block *gen_retblk(compiler_state_t *cstate, int);
 static inline void syntax(compiler_state_t *cstate);
 
 static void backpatch(struct block *, struct block *);
@@ -700,7 +699,7 @@ new_stmt(compiler_state_t *cstate, int code)
 	return p;
 }
 
-static struct block *
+struct block *
 gen_retblk(compiler_state_t *cstate, int v)
 {
 	struct block *b = new_block(cstate, BPF_RET|BPF_K);

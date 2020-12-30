@@ -350,8 +350,8 @@ DIAG_OFF_BISON_BYACC
 
 
 %token  DST SRC HOST GATEWAY
-%token  NET NETMASK PORT PORTRANGE LESS GREATER PROTO PROTOCHAIN CBYTE
 %token  ARP RARP IP SCTP TCP UDP ICMP IGMP IGRP PIM VRRP CARP
+%token  NET NETMASK PORT PORTRANGE LESS GREATER PROTO PROTOCHAIN CBYTE RETURNVAL
 %token  ATALK AARP DECNET LAT SCA MOPRC MOPDL
 %token  TK_BROADCAST TK_MULTICAST
 %token  NUM INBOUND OUTBOUND
@@ -494,6 +494,7 @@ head:	  pqual dqual aqual	{ QSET($$.q, $1, $2, $3); }
 	| pqual ndaqual		{ QSET($$.q, $1, Q_DEFAULT, $2); }
 	;
 rterm:	  head id		{ $$ = $2; }
+	| RETURNVAL NUM		{ CHECK_PTR_VAL(($$.b = gen_retblk(cstate, $2))); }
 	| paren expr ')'	{ $$.b = $2.b; $$.q = $1.q; }
 	| pname			{ CHECK_PTR_VAL(($$.b = gen_proto_abbrev(cstate, $1))); $$.q = qerr; }
 	| arth relop arth	{ CHECK_PTR_VAL(($$.b = gen_relation(cstate, $2, $1, $3, 0)));
