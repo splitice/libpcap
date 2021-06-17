@@ -621,10 +621,7 @@ compute_local_ud(struct block *b)
 			def |= ATOMMASK(atom);
 		}
 	}
-	if (BPF_CLASS(b->s.code) == BPF_JMP) {
-		/*
-		 * XXX - what about RET?
-		 */
+	if (BPF_CLASS(b->s.code) == BPF_JMP || BPF_CLASS(b->s.code) == BPF_RET) {
 		atom = atomuse(&b->s);
 		if (atom >= 0) {
 			if (atom == AX_ATOM) {
@@ -1462,8 +1459,7 @@ opt_blk(opt_state_t *opt_state, struct block *b, int do_stmts)
 	if (do_stmts &&
 	    ((b->out_use == 0 &&
 	      aval != VAL_UNKNOWN && b->val[A_ATOM] == aval &&
-	      xval != VAL_UNKNOWN && b->val[X_ATOM] == xval) ||
-	     BPF_CLASS(b->s.code) == BPF_RET)) {
+	      xval != VAL_UNKNOWN && b->val[X_ATOM] == xval))) {
 		if (b->stmts != 0) {
 			b->stmts = 0;
 			opt_state->done = 0;
