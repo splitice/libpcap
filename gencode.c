@@ -700,7 +700,23 @@ new_stmt(compiler_state_t *cstate, int code)
 }
 
 struct block *
-gen_retblk(compiler_state_t *cstate, int v)
+gen_retblk(compiler_state_t *cstate, struct arth *a0)
+{
+	struct slist* s0;
+	struct block* b;
+	
+	s0 = xfer_to_a(cstate, a0);
+	sappend(a0->s, s0);
+
+	b = new_block(cstate, BPF_RET|BPF_A);
+	b->stmts = a0->s;
+
+	return b;
+}
+
+
+struct block *
+gen_retnum(compiler_state_t *cstate, int v)
 {
 	struct block *b = new_block(cstate, BPF_RET|BPF_K);
 
@@ -822,7 +838,7 @@ pcap_compile(pcap_t *p, struct bpf_program *program,
 			rc = -1;
 			goto quit;
 		}
-		cstate.ic.root = gen_retblk(&cstate, cstate.snaplen);
+		cstate.ic.root = gen_retnum(&cstate, cstate.snaplen);
 	}
 
 	if (optimize && !cstate.no_optimize) {
@@ -991,9 +1007,9 @@ finish_parse(compiler_state_t *cstate, struct block *p)
 	if (ppi_dlt_check != NULL)
 		gen_and(ppi_dlt_check, p);
 
-	backpatch(p, gen_retblk(cstate, cstate->snaplen));
+	backpatch(p, gen_retnum(cstate, cstate->snaplen));
 	p->sense = !p->sense;
-	backpatch(p, gen_retblk(cstate, 0));
+	backpatch(p, gen_retnum(cstate, 0));
 	cstate->ic.root = p->head;
 	return (0);
 }

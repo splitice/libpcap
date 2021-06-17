@@ -494,7 +494,8 @@ head:	  pqual dqual aqual	{ QSET($$.q, $1, $2, $3); }
 	| pqual ndaqual		{ QSET($$.q, $1, Q_DEFAULT, $2); }
 	;
 rterm:	  head id		{ $$ = $2; }
-	| RETURNVAL NUM		{ CHECK_PTR_VAL(($$.b = gen_retblk(cstate, $2))); }
+	| RETURNVAL NUM		{ CHECK_PTR_VAL(($$.b = gen_retnum(cstate, $2))); }
+	| RETURNVAL narth		{ CHECK_PTR_VAL(($$.b = gen_retblk(cstate, $2))); }
 	| paren expr ')'	{ $$.b = $2.b; $$.q = $1.q; }
 	| pname			{ CHECK_PTR_VAL(($$.b = gen_proto_abbrev(cstate, $1))); $$.q = qerr; }
 	| arth relop arth	{ CHECK_PTR_VAL(($$.b = gen_relation(cstate, $2, $1, $3, 0)));
