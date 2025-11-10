@@ -181,7 +181,8 @@ if test $needstrlcat = yes; then
 	AC_LIBOBJ([strlcat])
 fi
 
-needstrlcpy=no
+# Force pcap_strlcpy to always be compiled in
+needstrlcpy=yes
 AC_CHECK_FUNCS(strlcpy,,
 	[needstrlcpy=yes])
 if test $needstrlcpy = yes; then

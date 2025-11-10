@@ -64,22 +64,21 @@ extern "C" {
   #endif
 #endif
 
-#ifdef HAVE_STRLCPY
-  #define pcap_strlcpy	strlcpy
-#else
-  #if defined(_MSC_VER) || defined(__MINGW32__)
-    /*
-     * strncpy_s() is supported at least back to Visual
-     * Studio 2005; we require Visual Studio 2015 or later.
-     */
-    #define pcap_strlcpy(x, y, z) \
+/*
+ * Always use our own pcap_strlcpy implementation to ensure it's available
+ */
+#if defined(_MSC_VER) || defined(__MINGW32__)
+  /*
+   * strncpy_s() is supported at least back to Visual
+   * Studio 2005; we require Visual Studio 2015 or later.
+   */
+  #define pcap_strlcpy(x, y, z) \
 	strncpy_s((x), (z), (y), _TRUNCATE)
-  #else
-    /*
-     * Define it ourselves.
-     */
-    extern size_t pcap_strlcpy(char * restrict dst, const char * restrict src, size_t dstsize);
-  #endif
+#else
+  /*
+   * Always define it ourselves to ensure availability.
+   */
+  extern size_t pcap_strlcpy(char * restrict dst, const char * restrict src, size_t dstsize);
 #endif
 
 #ifdef _MSC_VER
